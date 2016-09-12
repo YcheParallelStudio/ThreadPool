@@ -23,32 +23,28 @@ public:
     ~ThreadPool();
 
 private:
-    // need to keep track of threads so we can join them
-    vector<thread> workers;
-    // the task queue
-    queue<function<void()> > tasks;
+    vector<thread> workers_;
+    queue<function<void()> > tasks_;
 
-    // synchronization
-    mutex queue_mutex;
-    condition_variable condition;
-    bool stop;
+    mutex queue_mutex_;
+    condition_variable condition_;
+    bool stop_flag_;
 };
 
-// the constructor just launches some amount of workers
-ThreadPool::ThreadPool(size_t threads)
-        : stop(false) {
+// the constructor just launches some amount of workers_
+ThreadPool::ThreadPool(size_t threads) : stop_flag_(false) {
     for (size_t i = 0; i < threads; ++i)
-        workers.emplace_back(
+        workers_.emplace_back(
                 [this]() {
                     for (;;) {
                         function<void()> task;
                         {
-                            unique_lock<mutex> lock(this->queue_mutex);
-                            this->condition.wait(lock, [this] { return this->stop || !this->tasks.empty(); });
-                            if (this->stop && this->tasks.empty())
+                            unique_lock<mutex> lock(queue_mutex_);
+                            condition_.wait(lock, [this] { return stop_flag_ || !tasks_.empty(); });
+                            if (stop_flag_ && tasks_.empty())
                                 return;
-                            task = move(this->tasks.front());
-                            this->tasks.pop();
+                            task = move(tasks_.front());
+                            tasks_.pop();
                         }
                         task();
                     }
@@ -58,35 +54,31 @@ ThreadPool::ThreadPool(size_t threads)
 
 // add new work item to the pool
 template<class F, class... Args>
-auto ThreadPool::enqueue(F &&f, Args &&... args)
--> future<typename result_of<F(Args...)>::type> {
+auto ThreadPool::enqueue(F &&f, Args &&... args) -> future<typename result_of<F(Args...)>::type> {
     using return_type = typename result_of<F(Args...)>::type;
 
-    auto task = make_shared<packaged_task<return_type()> >(
-            bind(forward<F>(f), forward<Args>(args)...)
-    );
+    auto task = make_shared<packaged_task<return_type()>>(bind(forward<F>(f), forward<Args>(args)...));
 
     future<return_type> res = task->get_future();
     {
-        unique_lock<mutex> lock(queue_mutex);
+        unique_lock<mutex> lock(queue_mutex_);
         // don't allow enqueueing after stopping the pool
-        if (stop)
+        if (stop_flag_)
             throw runtime_error("enqueue on stopped ThreadPool");
 
-        tasks.emplace([task]() { (*task)(); });
+        tasks_.emplace([task]() { (*task)(); });
     }
-    condition.notify_one();
+    condition_.notify_one();
     return res;
 }
 
-// the destructor joins all threads
 ThreadPool::~ThreadPool() {
     {
-        unique_lock<mutex> lock(queue_mutex);
-        stop = true;
+        unique_lock<mutex> lock(queue_mutex_);
+        stop_flag_ = true;
     }
-    condition.notify_all();
-    for (thread &worker: workers)
+    condition_.notify_all();
+    for (thread &worker: workers_)
         worker.join();
 }
 
