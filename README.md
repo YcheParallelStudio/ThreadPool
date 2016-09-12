@@ -17,8 +17,7 @@ std::cout << result.get() << std::endl;
 ```
 
 Yche's Understanding
---------------------
----
+==========
 Original Author's contributions: Make use of 
 - move syntax and perfect forward(e.g, emplace_back usage), supported in C++11
 - lambda expression and function container, supported in C++11
